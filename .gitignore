@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+coverage.xml
+*.egg-info/
+
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.backup
+infra/terraform/.terraform.lock.hcl
+
+# dbt
+dbt/target/
+dbt/logs/
+
+# Docker
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# Data
+*.csv
+*.parquet

@@ -1,0 +1,19 @@
+version: 2
+sources:
+  - name: sensors_dw
+    database: sensors_dw
+    schema: public
+    tables:
+      - name: ohlcv_aggregations
+        description: "Agrégats OHLCV calculés par Spark (fenêtres 1 min)"
+        columns:
+          - name: symbol
+            tests: [not_null]
+          - name: window_start
+            tests: [not_null]
+          - name: close
+            tests:
+              - not_null
+          - name: volume
+            tests:
+              - not_null

@@ -1,0 +1,140 @@
+name: CI — Financial Streaming Platform
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PIPELINE ACTIF : Tests automatisés + Build Docker
+# PIPELINE FUTUR : Build ECR + Deploy EC2 (nécessite AWS credentials)
+#                  Voir jobs build-and-push et deploy (commentés ci-dessous)
+# ─────────────────────────────────────────────────────────────────────────────
+
+env:
+  AWS_REGION:   us-east-1
+  PROJECT_NAME: financial-streaming-platform
+
+jobs:
+  # ── 1. Tests & Qualité ───────────────────────────────────────────────────
+  test:
+    name: Tests & Linting
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-cov numpy pandas \
+                      fastapi httpx pydantic requests
+
+      - name: Run Spark logic tests
+        run: |
+          pytest tests/test_spark_logic.py -v --cov=. --cov-report=xml
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
+  # ── 2. Validation Docker Build ───────────────────────────────────────────
+  docker-build:
+    name: Validate Docker Build
+    needs: test
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        service: [data-generator, kafka-producer, spark-processor]
+        include:
+          - service: data-generator
+            context: ./producer
+          - service: kafka-producer
+            context: ./kafka-producer
+          - service: spark-processor
+            context: ./spark-processor
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.service }}
+        run: |
+          docker build ${{ matrix.context }} -t ${{ matrix.service }}:ci
+          echo "✅ ${{ matrix.service }} build OK"
+
+  # ── 3. Notification résumé ───────────────────────────────────────────────
+  notify:
+    name: Pipeline Summary
+    needs: [test, docker-build]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Status summary
+        run: |
+          echo "=============================="
+          echo "  Pipeline Financial Platform "
+          echo "=============================="
+          echo "  Tests    : ${{ needs.test.result }}"
+          echo "  Docker   : ${{ needs.docker-build.result }}"
+          echo "  Commit   : ${{ github.sha }}"
+          echo "  Branch   : ${{ github.ref_name }}"
+          echo "=============================="
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PERSPECTIVE — Déploiement AWS (à activer avec AWS credentials)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+#  build-and-push:
+#    name: Build & Push to ECR
+#    needs: test
+#    runs-on: ubuntu-latest
+#    if: github.ref == 'refs/heads/main'
+#    steps:
+#      - uses: actions/checkout@v4
+#      - uses: aws-actions/configure-aws-credentials@v4
+#        with:
+#          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+#          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+#          aws-region:            us-east-1
+#      - uses: aws-actions/amazon-ecr-login@v2
+#        id: login-ecr
+#      - name: Build, tag & push
+#        env:
+#          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+#          IMAGE_TAG:    ${{ github.sha }}
+#        run: |
+#          for svc in data-generator kafka-producer spark-processor; do
+#            IMAGE=$ECR_REGISTRY/financial-streaming-platform/$svc
+#            docker build -t $IMAGE:$IMAGE_TAG -t $IMAGE:latest ./$svc
+#            docker push $IMAGE --all-tags
+#          done
+#
+#  deploy:
+#    name: Deploy to EC2 via SSM
+#    needs: build-and-push
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: aws-actions/configure-aws-credentials@v4
+#        with:
+#          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+#          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+#          aws-region:            us-east-1
+#      - name: Deploy via SSM
+#        run: |
+#          INSTANCE_ID=$(aws ec2 describe-instances \
+#            --filters "Name=tag:Name,Values=financial-streaming-server" \
+#                      "Name=instance-state-name,Values=running" \
+#            --query "Reservations[0].Instances[0].InstanceId" --output text)
+#          aws ssm send-command \
+#            --instance-ids $INSTANCE_ID \
+#            --document-name "AWS-RunShellScript" \
+#            --parameters commands='["cd /app","git pull","docker compose up -d"]'

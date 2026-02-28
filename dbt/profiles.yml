@@ -1,0 +1,12 @@
+iot_sensors:
+  target: prod
+  outputs:
+    prod:
+      type: postgres
+      host: postgres
+      user: airflow
+      password: airflow
+      port: 5432
+      dbname: sensors_dw
+      schema: public
+      threads: 4
